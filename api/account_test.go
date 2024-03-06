@@ -171,24 +171,27 @@ func TestCreateAccountApi(t *testing.T) {
 
 	for i := range testCases {
 		tc := testCases[i]
-		ctrl := gomock.NewController(t)
-		store := mockdb.NewMockStore(ctrl)
-		tc.buildStubs(store)
 
-		// Start test server and send request
-		server := NewServer(store)
-		recorder := httptest.NewRecorder()
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			store := mockdb.NewMockStore(ctrl)
+			tc.buildStubs(store)
 
-		// Marshal body data to JSON
-		data, err := json.Marshal(tc.body)
-		require.NoError(t, err)
+			// Start test server and send request
+			server := NewServer(store)
+			recorder := httptest.NewRecorder()
 
-		url := "/accounts"
-		request, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
-		require.NoError(t, err)
+			// Marshal body data to JSON
+			data, err := json.Marshal(tc.body)
+			require.NoError(t, err)
 
-		server.router.ServeHTTP(recorder, request)
-		tc.checkResponse(t, recorder)
+			url := "/accounts"
+			request, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
+			require.NoError(t, err)
+
+			server.router.ServeHTTP(recorder, request)
+			tc.checkResponse(t, recorder)
+		})
 	}
 }
 
