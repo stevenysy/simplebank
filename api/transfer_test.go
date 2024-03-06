@@ -173,27 +173,112 @@ func TestCreateTransferApi(t *testing.T) {
 				require.Equal(t, http.StatusNotFound, recorder.Code)
 			},
 		},
+		{
+			name: "InvalidID",
+			body: gin.H{
+				"from_account_id": -1,
+				"to_account_id":   acc2.ID,
+				"amount":          amount,
+				"currency":        util.USD,
+			},
+			buildStubs: func(store *mockdb.MockStore) {
+				store.EXPECT().
+					GetAccount(gomock.Any(), gomock.Any()).
+					Times(0)
+
+				store.EXPECT().
+					TransferTx(gomock.Any(), gomock.Any()).
+					Times(0)
+			},
+			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
+				require.Equal(t, http.StatusBadRequest, recorder.Code)
+			},
+		},
+		{
+			name: "AccountInternalServerError",
+			body: gin.H{
+				"from_account_id": acc1.ID,
+				"to_account_id":   acc2.ID,
+				"amount":          amount,
+				"currency":        util.USD,
+			},
+			buildStubs: func(store *mockdb.MockStore) {
+				store.EXPECT().
+					GetAccount(gomock.Any(), gomock.Eq(acc1.ID)).
+					Times(1).
+					Return(db.Account{}, sql.ErrConnDone)
+
+				store.EXPECT().
+					GetAccount(gomock.Any(), gomock.Any()).
+					Times(0)
+
+				store.EXPECT().
+					TransferTx(gomock.Any(), gomock.Any()).
+					Times(0)
+			},
+			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
+				require.Equal(t, http.StatusInternalServerError, recorder.Code)
+			},
+		},
+		{
+			name: "TxInternalServerError",
+			body: gin.H{
+				"from_account_id": acc1.ID,
+				"to_account_id":   acc2.ID,
+				"amount":          amount,
+				"currency":        util.USD,
+			},
+			buildStubs: func(store *mockdb.MockStore) {
+				// Expect GetAccount to be called to validate currency
+				store.EXPECT().
+					GetAccount(gomock.Any(), gomock.Eq(acc1.ID)).
+					Times(1).
+					Return(acc1, nil)
+
+				store.EXPECT().
+					GetAccount(gomock.Any(), gomock.Eq(acc2.ID)).
+					Times(1).
+					Return(acc2, nil)
+
+				arg := db.TransferTxParams{
+					FromAccountID: acc1.ID,
+					ToAccountID:   acc2.ID,
+					Amount:        amount,
+				}
+
+				store.EXPECT().
+					TransferTx(gomock.Any(), gomock.Eq(arg)).
+					Times(1).
+					Return(db.TransferTxResult{}, sql.ErrConnDone)
+			},
+			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
+				require.Equal(t, http.StatusInternalServerError, recorder.Code)
+			},
+		},
 	}
 
 	for i := range testCases {
 		tc := testCases[i]
-		ctrl := gomock.NewController(t)
-		store := mockdb.NewMockStore(ctrl)
-		tc.buildStubs(store)
 
-		// Start test server and send request
-		server := NewServer(store)
-		recorder := httptest.NewRecorder()
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			store := mockdb.NewMockStore(ctrl)
+			tc.buildStubs(store)
 
-		// Marshal body data to JSON
-		data, err := json.Marshal(tc.body)
-		require.NoError(t, err)
+			// Start test server and send request
+			server := NewServer(store)
+			recorder := httptest.NewRecorder()
 
-		url := "/transfers"
-		request, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
-		require.NoError(t, err)
+			// Marshal body data to JSON
+			data, err := json.Marshal(tc.body)
+			require.NoError(t, err)
 
-		server.router.ServeHTTP(recorder, request)
-		tc.checkResponse(t, recorder)
+			url := "/transfers"
+			request, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
+			require.NoError(t, err)
+
+			server.router.ServeHTTP(recorder, request)
+			tc.checkResponse(t, recorder)
+		})
 	}
 }
