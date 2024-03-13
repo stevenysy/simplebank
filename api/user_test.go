@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/golang/mock/gomock"
 	mockdb "github.com/stevenysy/simplebank/db/mock"
@@ -12,8 +13,49 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 )
+
+type eqCreateUserParamsMatcher struct {
+	arg db.CreateUserParams
+	pw  string
+}
+
+func (e eqCreateUserParamsMatcher) Matches(x any) bool {
+	arg, ok := x.(db.CreateUserParams)
+	if !ok {
+		return false
+	}
+
+	if err := util.CheckPassword(e.pw, arg.HashedPassword); err != nil {
+		return false
+	}
+
+	e.arg.HashedPassword = arg.HashedPassword
+
+	// Check if types assignable and convert them to common type
+	x1Val := reflect.ValueOf(e.arg)
+	x2Val := reflect.ValueOf(x)
+
+	if x1Val.Type().AssignableTo(x2Val.Type()) {
+		x1ValConverted := x1Val.Convert(x2Val.Type())
+		return reflect.DeepEqual(x1ValConverted.Interface(), x2Val.Interface())
+	}
+
+	return false
+}
+
+func (e eqCreateUserParamsMatcher) String() string {
+	return fmt.Sprintf("matches arg %v and %v", e.arg, e.pw)
+}
+
+func EqCreateUserParams(arg db.CreateUserParams, pw string) gomock.Matcher {
+	return eqCreateUserParamsMatcher{
+		arg: arg,
+		pw:  pw,
+	}
+}
 
 func TestCreateUserApi(t *testing.T) {
 	user, pw := randomUser(t)
@@ -25,7 +67,7 @@ func TestCreateUserApi(t *testing.T) {
 		checkResponse func(recorder *httptest.ResponseRecorder)
 	}{
 		{
-			name: "ok",
+			name: "OK",
 			body: gin.H{
 				"username":  user.Username,
 				"password":  pw,
@@ -33,8 +75,14 @@ func TestCreateUserApi(t *testing.T) {
 				"email":     user.Email,
 			},
 			buildStubs: func(store *mockdb.MockStore) {
+				arg := db.CreateUserParams{
+					Username: user.Username,
+					FullName: user.FullName,
+					Email:    user.Email,
+				}
+
 				store.EXPECT().
-					CreateUser(gomock.Any(), gomock.Any()).
+					CreateUser(gomock.Any(), EqCreateUserParams(arg, pw)).
 					Times(1).
 					Return(user, nil)
 			},
@@ -48,6 +96,40 @@ func TestCreateUserApi(t *testing.T) {
 					CreatedAt:         user.CreatedAt,
 				}
 				requireBodyMatchUser(t, recorder.Body, rsp)
+			},
+		},
+		{
+			name: "InvalidUsername",
+			body: gin.H{
+				"username":  "abc123#",
+				"password":  pw,
+				"full_name": user.FullName,
+				"email":     user.Email,
+			},
+			buildStubs: func(store *mockdb.MockStore) {
+				store.EXPECT().
+					CreateUser(gomock.Any(), gomock.Any()).
+					Times(0)
+			},
+			checkResponse: func(recorder *httptest.ResponseRecorder) {
+				require.Equal(t, http.StatusBadRequest, recorder.Code)
+			},
+		},
+		{
+			name: "InvalidPassword",
+			body: gin.H{
+				"username":  user.Username,
+				"password":  "123",
+				"full_name": user.FullName,
+				"email":     user.Email,
+			},
+			buildStubs: func(store *mockdb.MockStore) {
+				store.EXPECT().
+					CreateUser(gomock.Any(), gomock.Any()).
+					Times(0)
+			},
+			checkResponse: func(recorder *httptest.ResponseRecorder) {
+				require.Equal(t, http.StatusBadRequest, recorder.Code)
 			},
 		},
 	}
@@ -88,7 +170,7 @@ func randomUser(t *testing.T) (db.User, string) {
 		HashedPassword: hashedPw,
 		FullName:       util.RandomOwner(),
 		Email:          util.RandomEmail(),
-	}, hashedPw
+	}, pw
 }
 
 func requireBodyMatchUser(t *testing.T, body *bytes.Buffer, userRsp createUserResponse) {
