@@ -88,7 +88,7 @@ func TestCreateUserApi(t *testing.T) {
 			},
 			checkResponse: func(recorder *httptest.ResponseRecorder) {
 				require.Equal(t, http.StatusCreated, recorder.Code)
-				rsp := createUserResponse{
+				rsp := userResponse{
 					Username:          user.Username,
 					FullName:          user.FullName,
 					Email:             user.Email,
@@ -143,7 +143,7 @@ func TestCreateUserApi(t *testing.T) {
 			store := mockdb.NewMockStore(ctrl)
 			tc.buildStubs(store)
 
-			server := NewServer(store)
+			server := newTestServer(t, store)
 			recorder := httptest.NewRecorder()
 
 			// Marshal body data to JSON
@@ -173,11 +173,11 @@ func randomUser(t *testing.T) (db.User, string) {
 	}, pw
 }
 
-func requireBodyMatchUser(t *testing.T, body *bytes.Buffer, userRsp createUserResponse) {
+func requireBodyMatchUser(t *testing.T, body *bytes.Buffer, userRsp userResponse) {
 	data, err := io.ReadAll(body)
 	require.NoError(t, err)
 
-	var receivedUserRsp createUserResponse
+	var receivedUserRsp userResponse
 	err = json.Unmarshal(data, &receivedUserRsp)
 	require.NoError(t, err)
 	require.Equal(t, userRsp, receivedUserRsp)
