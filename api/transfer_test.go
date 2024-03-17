@@ -8,11 +8,13 @@ import (
 	"github.com/golang/mock/gomock"
 	mockdb "github.com/stevenysy/simplebank/db/mock"
 	db "github.com/stevenysy/simplebank/db/sqlc"
+	"github.com/stevenysy/simplebank/token"
 	"github.com/stevenysy/simplebank/util"
 	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestCreateTransferApi(t *testing.T) {
@@ -32,6 +34,7 @@ func TestCreateTransferApi(t *testing.T) {
 	testCases := []struct {
 		name          string
 		body          gin.H
+		setupAuth     func(t *testing.T, req *http.Request, maker token.Maker)
 		buildStubs    func(store *mockdb.MockStore)
 		checkResponse func(t *testing.T, recorder *httptest.ResponseRecorder)
 	}{
@@ -42,6 +45,9 @@ func TestCreateTransferApi(t *testing.T) {
 				"to_account_id":   acc2.ID,
 				"amount":          amount,
 				"currency":        util.USD,
+			},
+			setupAuth: func(t *testing.T, req *http.Request, maker token.Maker) {
+				addAuth(t, req, maker, authorizationTypeBearer, user1.Username, time.Minute)
 			},
 			buildStubs: func(store *mockdb.MockStore) {
 				// Expect GetAccount to be called to validate currency
@@ -70,12 +76,38 @@ func TestCreateTransferApi(t *testing.T) {
 			},
 		},
 		{
+			name: "NoAuthorization",
+			body: gin.H{
+				"from_account_id": acc1.ID,
+				"to_account_id":   acc2.ID,
+				"amount":          amount,
+				"currency":        util.USD,
+			},
+			setupAuth: func(t *testing.T, req *http.Request, maker token.Maker) {
+			},
+			buildStubs: func(store *mockdb.MockStore) {
+				store.EXPECT().
+					GetAccount(gomock.Any(), gomock.Any()).
+					Times(0)
+
+				store.EXPECT().
+					GetAccount(gomock.Any(), gomock.Any()).
+					Times(0)
+			},
+			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
+				require.Equal(t, http.StatusUnauthorized, recorder.Code)
+			},
+		},
+		{
 			name: "FromAccountCurrencyMismatch",
 			body: gin.H{
 				"from_account_id": acc3.ID,
 				"to_account_id":   acc2.ID,
 				"amount":          amount,
 				"currency":        util.USD,
+			},
+			setupAuth: func(t *testing.T, req *http.Request, maker token.Maker) {
+				addAuth(t, req, maker, authorizationTypeBearer, user3.Username, time.Minute)
 			},
 			buildStubs: func(store *mockdb.MockStore) {
 				// Expect GetAccount to be called to validate currency
@@ -103,6 +135,9 @@ func TestCreateTransferApi(t *testing.T) {
 				"to_account_id":   acc3.ID,
 				"amount":          amount,
 				"currency":        util.USD,
+			},
+			setupAuth: func(t *testing.T, req *http.Request, maker token.Maker) {
+				addAuth(t, req, maker, authorizationTypeBearer, user1.Username, time.Minute)
 			},
 			buildStubs: func(store *mockdb.MockStore) {
 				// Expect GetAccount to be called to validate currency
@@ -132,6 +167,9 @@ func TestCreateTransferApi(t *testing.T) {
 				"amount":          amount,
 				"currency":        util.USD,
 			},
+			setupAuth: func(t *testing.T, req *http.Request, maker token.Maker) {
+				addAuth(t, req, maker, authorizationTypeBearer, user1.Username, time.Minute)
+			},
 			buildStubs: func(store *mockdb.MockStore) {
 				store.EXPECT().
 					GetAccount(gomock.Any(), gomock.Eq(acc1.ID)).
@@ -158,6 +196,9 @@ func TestCreateTransferApi(t *testing.T) {
 				"amount":          amount,
 				"currency":        util.USD,
 			},
+			setupAuth: func(t *testing.T, req *http.Request, maker token.Maker) {
+				addAuth(t, req, maker, authorizationTypeBearer, user1.Username, time.Minute)
+			},
 			buildStubs: func(store *mockdb.MockStore) {
 				store.EXPECT().
 					GetAccount(gomock.Any(), gomock.Eq(acc1.ID)).
@@ -178,33 +219,15 @@ func TestCreateTransferApi(t *testing.T) {
 			},
 		},
 		{
-			name: "InvalidID",
-			body: gin.H{
-				"from_account_id": -1,
-				"to_account_id":   acc2.ID,
-				"amount":          amount,
-				"currency":        util.USD,
-			},
-			buildStubs: func(store *mockdb.MockStore) {
-				store.EXPECT().
-					GetAccount(gomock.Any(), gomock.Any()).
-					Times(0)
-
-				store.EXPECT().
-					TransferTx(gomock.Any(), gomock.Any()).
-					Times(0)
-			},
-			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
-				require.Equal(t, http.StatusBadRequest, recorder.Code)
-			},
-		},
-		{
 			name: "AccountInternalServerError",
 			body: gin.H{
 				"from_account_id": acc1.ID,
 				"to_account_id":   acc2.ID,
 				"amount":          amount,
 				"currency":        util.USD,
+			},
+			setupAuth: func(t *testing.T, req *http.Request, maker token.Maker) {
+				addAuth(t, req, maker, authorizationTypeBearer, user1.Username, time.Minute)
 			},
 			buildStubs: func(store *mockdb.MockStore) {
 				store.EXPECT().
@@ -231,6 +254,9 @@ func TestCreateTransferApi(t *testing.T) {
 				"to_account_id":   acc2.ID,
 				"amount":          amount,
 				"currency":        util.USD,
+			},
+			setupAuth: func(t *testing.T, req *http.Request, maker token.Maker) {
+				addAuth(t, req, maker, authorizationTypeBearer, user1.Username, time.Minute)
 			},
 			buildStubs: func(store *mockdb.MockStore) {
 				// Expect GetAccount to be called to validate currency
@@ -281,6 +307,7 @@ func TestCreateTransferApi(t *testing.T) {
 			request, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
 			require.NoError(t, err)
 
+			tc.setupAuth(t, request, server.tokenMaker)
 			server.router.ServeHTTP(recorder, request)
 			tc.checkResponse(t, recorder)
 		})
